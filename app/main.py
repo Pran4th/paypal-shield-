@@ -10,7 +10,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import agent, demo, eta, store
+from . import agent, demo, eta, llm, store
 from .paypal import PayPalClient, PayPalError
 
 app = FastAPI(title="PayPal Shield")
@@ -175,8 +175,8 @@ def studio_config():
     """Public config for the AG Studio page — no secrets leave here."""
     return {
         "license_key": os.environ.get("AG_STUDIO_LICENSE_KEY", ""),
-        "ai_enabled": bool(os.environ.get("OPENAI_API_KEY")),
-        "model": os.environ.get("LLM_MODEL", "gpt-4o-mini"),
+        "ai_enabled": llm.enabled(),
+        "model": llm.model(),
     }
 
 
@@ -184,18 +184,17 @@ def studio_config():
 async def ai_responses(request: Request):
     """SSE proxy for AG Studio's OpenAI adapter: adds the key server-side,
     streams the Responses API reply straight back."""
-    key = os.environ.get("OPENAI_API_KEY")
-    if not key:
-        return JSONResponse({"error": {"message": "AI assistant not configured — set OPENAI_API_KEY"}}, 503)
+    if not llm.enabled():
+        return JSONResponse({"error": {"message": "AI assistant not configured — set OPENAI_API_KEY or GROQ_API_KEY"}}, 503)
     body = await request.json()
-    body["model"] = os.environ.get("LLM_MODEL", body.get("model", "gpt-4o-mini"))
+    body["model"] = llm.model()
     body.setdefault("max_output_tokens", 8192)
 
     async def stream():
         async with httpx.AsyncClient(timeout=None) as c:
             async with c.stream(
-                "POST", "https://api.openai.com/v1/responses",
-                headers={"Authorization": f"Bearer {key}"},
+                "POST", f"{llm.base()}/responses",
+                headers={"Authorization": f"Bearer {llm.key()}"},
                 json=body,
             ) as r:
                 async for chunk in r.aiter_raw():

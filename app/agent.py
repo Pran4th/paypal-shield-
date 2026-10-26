@@ -17,25 +17,22 @@ from datetime import date
 
 import httpx
 
-from . import store
+from . import llm, store
 
 # ---------------------------------------------------------------- LLM layer
-
-LLM_MODEL = os.environ.get("LLM_MODEL", "gpt-4o-mini")
 
 
 async def draft_text(prompt: str) -> str:
     """Ask the LLM to write concise merchant-facing copy; template fallback."""
-    key = os.environ.get("OPENAI_API_KEY")
-    if not key:
+    if not llm.enabled():
         return template_text(prompt)
     try:
         async with httpx.AsyncClient(timeout=30) as c:
             r = await c.post(
-                "https://api.openai.com/v1/chat/completions",
-                headers={"Authorization": f"Bearer {key}"},
+                f"{llm.base()}/chat/completions",
+                headers={"Authorization": f"Bearer {llm.key()}"},
                 json={
-                    "model": LLM_MODEL,
+                    "model": llm.model(),
                     "messages": [
                         {
                             "role": "system",
@@ -46,7 +43,8 @@ async def draft_text(prompt: str) -> str:
                         },
                         {"role": "user", "content": prompt},
                     ],
-                    "max_tokens": 220,
+                    "max_completion_tokens": 500,
+                    **llm.chat_extra(),
                 },
             )
             r.raise_for_status()
