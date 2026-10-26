@@ -31,6 +31,7 @@ import {
   createAiHarness,
   AgStudioAiModule,
   AgStudioLicenseManager,
+  AgStudioModuleRegistry,
 } from "https://cdn.jsdelivr.net/npm/ag-studio@3.0.0/dist/package/main.esm.mjs";
 
 const F = {
@@ -265,6 +266,7 @@ const PROMPT_STARTERS = [
     fetch("/api/studio/config").then(r => r.json()),
   ]);
   if (cfg.license_key) AgStudioLicenseManager.setLicenseKey(cfg.license_key);
+  if (cfg.ai_enabled) AgStudioModuleRegistry.registerModules([AgStudioAiModule]);
 
   const data = buildData(state);
   const ai = cfg.ai_enabled
