@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Shield — post-purchase trust agent</title>
+  <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@31.3.2/dist/ag-grid-community.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f1115; --panel: #171a21; --border: #262b36; --text: #e8eaf0;
+      --muted: #8b93a5; --accent: #0070ba; --red: #e5484d; --amber: #ffb224;
+      --green: #46a758;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--text);
+      font: 14px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    header {
+      display: flex; align-items: baseline; gap: 12px; padding: 18px 24px;
+      border-bottom: 1px solid var(--border); flex-wrap: wrap;
+    }
+    h1 { font-size: 18px; margin: 0; }
+    h1 span { color: var(--muted); font-weight: 400; }
+    .pill {
+      font-size: 11px; padding: 2px 8px; border-radius: 10px;
+      border: 1px solid var(--border); color: var(--muted);
+    }
+    .pill.demo { color: var(--amber); border-color: var(--amber); }
+    .stats { display: flex; gap: 24px; padding: 14px 24px; flex-wrap: wrap; }
+    .stat .num { font-size: 22px; font-weight: 700; }
+    .stat .lbl { color: var(--muted); font-size: 12px; }
+    .stat.guard .num { color: var(--green); }
+    main { display: grid; grid-template-columns: 1fr 380px; gap: 16px; padding: 0 24px 24px; }
+    .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+    .panel h2 {
+      margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: .06em;
+      color: var(--muted); padding: 12px 14px; border-bottom: 1px solid var(--border);
+    }
+    #orders-grid { height: 560px; }
+    .risk { font-weight: 700; padding: 0 8px; border-radius: 8px; }
+    .r-high { color: var(--red); } .r-med { color: var(--amber); } .r-low { color: var(--green); }
+    .side { display: flex; flex-direction: column; gap: 16px; }
+    .card {
+      padding: 12px 14px; border-bottom: 1px solid var(--border);
+      display: flex; flex-direction: column; gap: 6px;
+    }
+    .card:last-child { border-bottom: 0; }
+    .card .top { display: flex; justify-content: space-between; gap: 8px; align-items: start; }
+    .card .kind { font-size: 11px; color: var(--accent); text-transform: uppercase; letter-spacing: .05em; }
+    .card .sum { font-weight: 600; }
+    .card .det { color: var(--muted); font-size: 12px; white-space: pre-wrap; }
+    .card .meta { color: var(--muted); font-size: 11px; }
+    .btns { display: flex; gap: 8px; margin-top: 4px; }
+    button {
+      border: 1px solid var(--border); background: #1e222b; color: var(--text);
+      padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;
+    }
+    button.primary { background: var(--accent); border-color: var(--accent); }
+    button:hover { filter: brightness(1.2); }
+    button:disabled { opacity: .4; cursor: default; }
+    .tag { font-size: 11px; padding: 1px 7px; border-radius: 8px; }
+    .tag.proposed { background: #2a3040; color: var(--amber); }
+    .tag.executed { background: #17301f; color: var(--green); }
+    .tag.rejected { background: #2a1b1c; color: var(--muted); }
+    .tag.draft { background: #2a3040; color: var(--amber); }
+    .tag.sent { background: #17301f; color: var(--green); }
+    .due { color: var(--red); font-weight: 600; }
+    .empty { color: var(--muted); padding: 14px; font-size: 13px; }
+    details.draftbox { font-size: 12px; color: var(--muted); }
+    details.draftbox summary { cursor: pointer; color: var(--text); }
+    details.draftbox pre { white-space: pre-wrap; color: var(--text); background: #10131a; padding: 10px; border-radius: 6px; }
+    #events { max-height: 180px; overflow: auto; font-size: 12px; color: var(--muted); padding: 0 24px 24px; }
+    #events div { padding: 3px 0; border-bottom: 1px solid var(--border); }
+    @media (max-width: 1100px) { main { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Shield <span>— post-purchase trust agent</span></h1>
+    <span class="pill" id="mode-pill">…</span>
+    <button onclick="refresh()" style="margin-left:auto">Re-scan orders</button>
+  </header>
+
+  <div class="stats">
+    <div class="stat guard"><div class="num" id="s-protected">$0</div><div class="lbl">dollars protected</div></div>
+    <div class="stat"><div class="num" id="s-orders">0</div><div class="lbl">orders watched</div></div>
+    <div class="stat"><div class="num" id="s-atrisk">0</div><div class="lbl">at risk (≥40)</div></div>
+    <div class="stat"><div class="num" id="s-proposals">0</div><div class="lbl">proposed actions</div></div>
+    <div class="stat"><div class="num" id="s-disputes">0</div><div class="lbl">open disputes</div></div>
+  </div>
+
+  <main>
+    <section class="panel">
+      <h2>Order risk inbox</h2>
+      <div id="orders-grid" class="ag-theme-quartz-dark"></div>
+    </section>
+    <div class="side">
+      <section class="panel">
+        <h2>Proposed interventions</h2>
+        <div id="interventions"></div>
+      </section>
+      <section class="panel">
+        <h2>Disputes</h2>
+        <div id="disputes"></div>
+      </section>
+    </div>
+  </main>
+
+  <section class="panel" style="margin:0 24px 24px">
+    <h2>Webhook + agent event log</h2>
+    <div id="events"></div>
+  </section>
+
+  <script src="/app.js"></script>
+</body>
+</html>
