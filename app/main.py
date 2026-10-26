@@ -10,7 +10,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import agent, demo, store
+from . import agent, demo, eta, store
 from .paypal import PayPalClient, PayPalError
 
 app = FastAPI(title="PayPal Shield")
@@ -161,6 +161,13 @@ async def webhook(request: Request):
             store.set_dispute_draft(d["dispute_id"], text, "draft")
     await agent.rescore_all()
     return {"received": True}
+
+
+@app.post("/api/eta/sync")
+async def eta_sync():
+    res = await eta.sync()
+    await agent.rescore_all()
+    return res
 
 
 @app.post("/api/demo/seed")

@@ -1,0 +1,17 @@
+[
+  {
+    "order_id": "SBX-ORD-1003",
+    "eta": "2026-12-18",
+    "note": "Bernhardt: lumber backlog, production pushed 3 weeks"
+  },
+  {
+    "order_id": "SBX-ORD-1005",
+    "eta": "2026-12-09",
+    "note": "Gio Italia: container delayed at port"
+  },
+  {
+    "order_id": "SBX-ORD-1009",
+    "eta": "2026-11-14",
+    "note": "Modern Heritage: QC passed early, pulled forward"
+  }
+]

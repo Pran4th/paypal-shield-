@@ -14,6 +14,7 @@ then file instead of calling. Chargeback software exists but it all reacts
 | Job | How | PayPal APIs |
 |---|---|---|
 | Risk watch | Scores every open order (ETA slips, days-silent, ticket size) | Transaction Search, Orders v2 |
+| ETA feed | Syncs vendor lead-time updates (`/api/eta/sync`) — the signal PayPal can't see | ETA_FEED_URL or `data/eta_feed.json` |
 | Prevention | Proposes interventions: post tracking, proactive buyer update, partial credit | Add Tracking API, Payments refunds, webhooks |
 | Defense | Drafts evidence-aware dispute responses, merchant approves and sends | Disputes API, `CUSTOMER.DISPUTE.CREATED` webhook |
 
@@ -34,7 +35,14 @@ Open http://localhost:8000
 # fire the demo moments
 python scripts/simulate_webhook.py dispute    # chargeback lands → agent auto-drafts response
 python scripts/simulate_webhook.py capture    # new payment lands → risk-scored
+curl -X POST http://localhost:8000/api/eta/sync  # vendor ETA feed sync → two orders slip, risk jumps
 ```
+
+## Deploy (Render, one file)
+
+`render.yaml` is in the repo — New → Blueprint on [Render](https://render.com),
+paste the repo URL, fill the env vars marked `sync: false`. Ships with
+`DEMO_MODE=1` so it works before you wire sandbox credentials.
 
 ## Real sandbox mode
 
@@ -50,7 +58,7 @@ pluggable LLM drafting (`OPENAI_API_KEY`; template fallback without a key).
 
 ## Roadmap to the real product
 
-- Merchant ETA feed connector (vendor stock/lead-time data) — the risk model's strongest signal
+- ETA feed → real vendor connectors (Shopify metafields, supplier EDI)
 - PayPal Agent Toolkit / MCP server for the tool layer
 - Buyer message delivery (email/SMS) for the `buyer_message` intervention
 - PayPal Commerce Platform multiparty for marketplace merchants
