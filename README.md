@@ -38,6 +38,15 @@ python scripts/simulate_webhook.py capture    # new payment lands → risk-score
 curl -X POST http://localhost:8000/api/eta/sync  # vendor ETA feed sync → two orders slip, risk jumps
 ```
 
+## AG Studio (sponsor surface — $5k Best Use of AG Studio)
+
+`/studio.html` embeds **AG Studio** over the same `/api/state` data: orders,
+interventions, disputes and the event log as related data sources, with
+cross-filtering and self-serve widgets. With `OPENAI_API_KEY` set, the
+**Studio Agent Framework** assistant lights up — it can query, chart and edit
+the dashboard through our `/api/ai/responses` SSE proxy (key never reaches the
+browser). Needs an `AG_STUDIO_LICENSE_KEY` (free trial from AG Grid).
+
 ## Deploy (Render, one file)
 
 `render.yaml` is in the repo — New → Blueprint on [Render](https://render.com),

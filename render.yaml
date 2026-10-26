@@ -18,5 +18,7 @@ services:
         sync: false
       - key: OPENAI_API_KEY
         sync: false
+      - key: AG_STUDIO_LICENSE_KEY
+        sync: false
       - key: ETA_FEED_URL
         sync: false

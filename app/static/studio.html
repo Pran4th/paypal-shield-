@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Shield — AG Studio</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  html,body{margin:0;height:100%;background:#0f1115;color:#e8eaf0;font-family:Inter,system-ui,sans-serif}
+  .bar{display:flex;align-items:center;gap:14px;padding:10px 18px;border-bottom:1px solid #23262e;font-size:14px}
+  .bar b{color:#9ec1ff}.bar a{color:#8a93a6;text-decoration:none}.bar a:hover{color:#fff}
+  #studio{height:calc(100% - 44px)}
+  #note{padding:40px;color:#8a93a6;font-size:14px;display:none}
+  #note code{background:#1a1d24;padding:2px 6px;border-radius:4px}
+</style>
+</head>
+<body>
+<div class="bar">
+  <b>SHIELD</b> <span>AG Studio — self-serve trust analytics</span>
+  <a href="/">&larr; ops dashboard</a>
+</div>
+<div id="note">
+  <p><b>AG Studio did not start.</b></p>
+  <p>Set <code>AG_STUDIO_LICENSE_KEY</code> (trial key from ag-grid.com) and reload.
+  The data layer below still works — see the console for the exact error.</p>
+</div>
+<div id="studio"></div>
+
+<script type="module">
+import {
+  createStudio,
+  createAiHarness,
+  AgStudioAiModule,
+  AgStudioLicenseManager,
+} from "https://cdn.jsdelivr.net/npm/ag-studio@3.0.0/dist/package/main.esm.mjs";
+
+const F = {
+  text: "textFormat", int: "integerFormat", cur: "currencyFormat",
+  date: "dateFormat", pct: "percentageFormat",
+};
+const fld = (id, name, format, hide) => ({ id, name, format, ...(hide && { hide: true }) });
+
+function buildData(state) {
+  return {
+    description:
+      "Post-purchase trust data for a furniture merchant's PayPal order book. " +
+      "orders: open orders with risk_score 0-100 (higher = likelier chargeback), " +
+      "eta_slips counts vendor lead-time slips, days_since_buyer_contact is buyer silence. " +
+      "interventions: agent-proposed actions (post_tracking, buyer_message, offer_credit, offer_refund) " +
+      "with status proposed/executed/rejected. disputes: PayPal cases with response deadlines. " +
+      "events: webhook + agent activity log.",
+    sources: [
+      {
+        id: "orders",
+        description: "One row per captured PayPal order being watched.",
+        data: state.orders,
+        fields: [
+          fld("order_id", "Order ID", F.text, true),
+          fld("payer_name", "Buyer", F.text),
+          fld("payer_email", "Email", F.text),
+          fld("description", "Item", F.text),
+          fld("amount", "Amount", F.cur),
+          fld("currency", "Currency", F.text),
+          fld("status", "Status", F.text),
+          fld("ordered_at", "Ordered", F.date),
+          fld("promised_eta", "Promised ETA", F.date),
+          fld("updated_eta", "Updated ETA", F.date),
+          fld("eta_slips", "ETA Slips", F.int),
+          fld("days_since_buyer_contact", "Days Silent", F.int),
+          fld("risk_score", "Risk Score", F.int),
+          fld("tracking_number", "Tracking", F.text),
+        ],
+      },
+      {
+        id: "interventions",
+        description: "Agent-proposed interventions awaiting or past merchant review.",
+        data: state.interventions.map(i => ({ ...i, order_ref: i.order_id })),
+        fields: [
+          fld("id", "ID", F.int, true),
+          fld("order_id", "Order ID", F.text, true),
+          fld("kind", "Type", F.text),
+          fld("status", "Status", F.text),
+          fld("summary", "Summary", F.text),
+          fld("amount", "Amount", F.cur),
+          fld("created_at", "Proposed", F.date),
+          fld("decided_at", "Decided", F.date),
+        ],
+      },
+      {
+        id: "disputes",
+        description: "PayPal disputes: the cases that slipped through prevention.",
+        data: state.disputes,
+        fields: [
+          fld("dispute_id", "Dispute ID", F.text, true),
+          fld("order_id", "Order ID", F.text, true),
+          fld("amount", "Amount", F.cur),
+          fld("currency", "Currency", F.text),
+          fld("reason", "Reason", F.text),
+          fld("status", "Status", F.text),
+          fld("stage", "Stage", F.text),
+          fld("response_due", "Response Due", F.date),
+          fld("evidence_status", "Evidence", F.text),
+        ],
+      },
+      {
+        id: "events",
+        description: "Webhook and agent activity log (newest first).",
+        data: state.events,
+        fields: [
+          fld("id", "ID", F.int, true),
+          fld("event_type", "Event", F.text),
+          fld("resource_id", "Resource", F.text),
+          fld("received_at", "At", F.text),
+        ],
+      },
+    ],
+    relations: [
+      {
+        id: "iv-order",
+        source: { tableId: "interventions", fieldId: "order_id" },
+        target: { tableId: "orders", fieldId: "order_id" },
+        type: "many-to-one",
+      },
+      {
+        id: "dp-order",
+        source: { tableId: "disputes", fieldId: "order_id" },
+        target: { tableId: "orders", fieldId: "order_id" },
+        type: "many-to-one",
+      },
+    ],
+  };
+}
+
+// --- OpenAI Responses API adapter (AgLlmAdapter) -------------------------------
+// Browser → POST /api/ai/responses → our server adds the key and streams
+// OpenAI's SSE back. Nothing secret in this file.
+const openaiAdapter = ({ endpoint, model }) => ({
+  executeTurn(request, { signal } = {}) {
+    const input = (request.input || []).map(item => {
+      if (item.type === "function_call_output")
+        return { type: "function_call_output", call_id: item.callId, output: item.output };
+      if (item.type === "function_call")
+        return { type: "function_call", call_id: item.callId, name: item.name, arguments: item.arguments };
+      if (item.kind === "output")
+        return { type: "message", role: "assistant", content: (item.content || []).map(c => ({ type: "output_text", text: c.text || "" })) };
+      const role = item.role === "system" ? "developer" : item.role;
+      return { role, content: (item.content || []).map(c => ({ type: "input_text", text: c.text || "" })) };
+    });
+    const body = {
+      model: request.model?.id || model,
+      input,
+      stream: true,
+      ...(request.instructions && { instructions: request.instructions }),
+      ...(request.tools?.length && {
+        tools: request.tools.map(t => ({ type: "function", name: t.name, description: t.description, parameters: t.parameters, strict: false })),
+      }),
+      ...(request.responseFormat?.type === "json" && {
+        text: { format: { type: "json_schema", name: request.responseFormat.name, schema: request.responseFormat.schema, strict: false } },
+      }),
+    };
+
+    const events = [];
+    let resolveComplete;
+    const complete = new Promise(r => (resolveComplete = r));
+    const queue = [];
+    let done = false;
+    const push = e => { queue.push(e); done && 0; };
+
+    (async () => {
+      const out = [];
+      let msgId = null, callId = null, respId = "resp", usage, finalStatus = "completed";
+      try {
+        const res = await fetch(`${endpoint}/responses`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+          signal,
+        });
+        if (!res.ok) {
+          const t = await res.text();
+          queue.push({ type: "RUN_ERROR", message: `OpenAI ${res.status}: ${t.slice(0, 300)}` });
+          resolveComplete({ id: respId, createdAt: Date.now(), status: "failed", error: { code: String(res.status), message: t.slice(0, 300) }, output: [] });
+          return;
+        }
+        const reader = res.body.getReader();
+        const dec = new TextDecoder();
+        let buf = "";
+        for (;;) {
+          const { value, done: d } = await reader.read();
+          if (d) break;
+          buf += dec.decode(value, { stream: true });
+          let idx;
+          while ((idx = buf.indexOf("\n\n")) >= 0) {
+            const chunk = buf.slice(0, idx); buf = buf.slice(idx + 2);
+            const dataLine = chunk.split("\n").find(l => l.startsWith("data:"));
+            if (!dataLine) continue;
+            const payload = dataLine.slice(5).trim();
+            if (payload === "[DONE]") continue;
+            let ev; try { ev = JSON.parse(payload); } catch { continue; }
+            const t = ev.type;
+            if (t === "response.output_item.added") {
+              if (ev.item?.type === "message") msgId = ev.item.id;
+              else if (ev.item?.type === "function_call") { callId = ev.item.call_id; queue.push({ type: "TOOL_CALL_CHUNK", toolCallId: ev.item.call_id, toolCallName: ev.item.name }); }
+            } else if (t === "response.output_text.delta") {
+              queue.push({ type: "TEXT_MESSAGE_CHUNK", messageId: msgId || undefined, delta: ev.delta });
+            } else if (t === "response.reasoning_summary_text.delta" || t === "response.reasoning_text.delta") {
+              queue.push({ type: "REASONING_MESSAGE_CHUNK", delta: ev.delta });
+            } else if (t === "response.function_call_arguments.delta") {
+              queue.push({ type: "TOOL_CALL_CHUNK", delta: ev.delta });
+            } else if (t === "response.output_item.done") {
+              const it = ev.item;
+              if (it?.type === "function_call")
+                out.push({ kind: "output", type: "function_call", id: it.id, callId: it.call_id, name: it.name, arguments: it.arguments, status: "completed" });
+              else if (it?.type === "reasoning")
+                out.push({ kind: "output", type: "reasoning", id: it.id, summary: it.summary || [] });
+            } else if (t === "response.completed") {
+              const r = ev.response || {};
+              respId = r.id || respId;
+              usage = r.usage && { inputTokens: r.usage.input_tokens, outputTokens: r.usage.output_tokens, totalTokens: r.usage.total_tokens };
+              finalStatus = r.status === "incomplete" ? "incomplete" : "completed";
+              for (const it of r.output || []) {
+                if (it.type === "message")
+                  out.push({ kind: "output", type: "message", id: it.id, role: "assistant", status: "completed", content: (it.content || []).map(c => ({ type: "text", text: c.text || "", annotations: c.annotations || [] })) });
+              }
+            } else if (t === "response.failed") {
+              finalStatus = "failed";
+              const msg = ev.response?.error?.message || "OpenAI error";
+              queue.push({ type: "RUN_ERROR", message: msg });
+            }
+          }
+        }
+      } catch (e) {
+        if (e.name !== "AbortError") queue.push({ type: "RUN_ERROR", message: String(e) });
+      }
+      done = true;
+      resolveComplete({
+        id: respId, createdAt: Date.now(), status: finalStatus,
+        output: out, ...(usage && { usage }), model,
+        ...(finalStatus === "incomplete" && { incompleteDetails: { reason: "max_output_tokens" } }),
+      });
+    })();
+
+    return {
+      stream: (async function* () {
+        for (;;) {
+          while (queue.length) yield queue.shift();
+          if (done) return;
+          await new Promise(r => setTimeout(r, 15));
+        }
+      })(),
+      complete,
+    };
+  },
+});
+
+const PROMPT_STARTERS = [
+  { label: "Summarise this page", prompt: "Summarise what this page shows: every widget, the fields it reads, and what stands out." },
+  { label: "Riskiest orders", prompt: "Which orders have the highest risk scores and why? Build a table of the top 5." },
+  { label: "Risk by ticket size", prompt: "Add a chart of risk score by order amount." },
+  { label: "Dispute readiness", prompt: "Which disputes are closest to their response deadline and what's their evidence status?" },
+];
+
+(async () => {
+  const [state, cfg] = await Promise.all([
+    fetch("/api/state").then(r => r.json()),
+    fetch("/api/studio/config").then(r => r.json()),
+  ]);
+  if (cfg.license_key) AgStudioLicenseManager.setLicenseKey(cfg.license_key);
+
+  const data = buildData(state);
+  const ai = cfg.ai_enabled
+    ? ({ api }) => createAiHarness(api, {
+        adapter: openaiAdapter({ endpoint: "/api/ai", model: cfg.model }),
+        promptStarters: PROMPT_STARTERS,
+      })
+    : undefined;
+
+  try {
+    createStudio(
+      document.getElementById("studio"),
+      {
+        data,
+        mode: "edit",
+        ...(ai && { ai }),
+        loadThemeGoogleFonts: false,
+      },
+      { modules: ai ? [AgStudioAiModule] : [] },
+    );
+  } catch (e) {
+    console.error("AG Studio failed:", e);
+    document.getElementById("note").style.display = "block";
+  }
+})();
+</script>
+</body>
+</html>

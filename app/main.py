@@ -7,7 +7,7 @@ from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import agent, demo, eta, store
@@ -168,6 +168,40 @@ async def eta_sync():
     res = await eta.sync()
     await agent.rescore_all()
     return res
+
+
+@app.get("/api/studio/config")
+def studio_config():
+    """Public config for the AG Studio page — no secrets leave here."""
+    return {
+        "license_key": os.environ.get("AG_STUDIO_LICENSE_KEY", ""),
+        "ai_enabled": bool(os.environ.get("OPENAI_API_KEY")),
+        "model": os.environ.get("LLM_MODEL", "gpt-4o-mini"),
+    }
+
+
+@app.post("/api/ai/responses")
+async def ai_responses(request: Request):
+    """SSE proxy for AG Studio's OpenAI adapter: adds the key server-side,
+    streams the Responses API reply straight back."""
+    key = os.environ.get("OPENAI_API_KEY")
+    if not key:
+        return JSONResponse({"error": {"message": "AI assistant not configured — set OPENAI_API_KEY"}}, 503)
+    body = await request.json()
+    body["model"] = os.environ.get("LLM_MODEL", body.get("model", "gpt-4o-mini"))
+    body.setdefault("max_output_tokens", 8192)
+
+    async def stream():
+        async with httpx.AsyncClient(timeout=None) as c:
+            async with c.stream(
+                "POST", "https://api.openai.com/v1/responses",
+                headers={"Authorization": f"Bearer {key}"},
+                json=body,
+            ) as r:
+                async for chunk in r.aiter_raw():
+                    yield chunk
+
+    return StreamingResponse(stream(), media_type="text/event-stream")
 
 
 @app.post("/api/demo/seed")
