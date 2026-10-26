@@ -37,8 +37,12 @@ async def draft_text(prompt: str) -> str:
                         {
                             "role": "system",
                             "content": (
-                                "You are the trust desk of a furniture retailer. "
-                                "Write short, concrete, warm copy. No fluff. 2-4 sentences."
+                                "You are the support desk of a furniture retailer. Write "
+                                "plain, factual customer copy: state the order, the item, "
+                                "and what changed in plain words. Acknowledge delays "
+                                "directly, never apologize excessively, no hype, no "
+                                "exclamation marks, no 'we can't wait'. Offer one concrete "
+                                "next step. 2-4 sentences, under 320 characters."
                             ),
                         },
                         {"role": "user", "content": prompt},
